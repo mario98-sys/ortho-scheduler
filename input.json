@@ -1,0 +1,274 @@
+{
+  "year": 2026,
+  "month": 3,
+  "roles": [
+    "first",
+    "second",
+    "half",
+    "maccabi"
+  ],
+  "role_required": {
+    "first": "ALL_DAYS",
+    "second": "ALL_DAYS",
+    "maccabi": "ALL_DAYS",
+    "half": "SUN_THU"
+  },
+  "rules": {
+    "no_two_roles_same_day": true,
+    "first_second_blocks_next_day_first_second": true,
+    "first_second_blocks_next_day_maccabi": true,
+    "maccabi_allows_next_day_anything": true,
+    "half_can_follow_half": true,
+    "max_consecutive_days": 2,
+    "min_rest_days_any": 0
+  },
+  "people": [
+    {
+      "name": "מייקל שטיין",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "קיריל קולטונוב",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "prefer_maccabi_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": []
+    },
+    {
+      "name": "טוני גנטוס",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "prefer_maccabi_dates": [],
+      "quota": {},
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "הדר ברקת",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "דן לוי",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "prefer_maccabi_dates": [],
+      "quota": {},
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "אביעד קזאס",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "שאדן אבו נאסר",
+      "can": [
+        "first",
+        "second",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "אבירם אלבגלי",
+      "can": [
+        "first",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "אחמד שחאדה",
+      "can": [
+        "second",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "מג'די מרזוק",
+      "can": [
+        "second",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "ראיין אבו יונס",
+      "can": [
+        "second"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "אלכס איסטאייב",
+      "can": [
+        "second",
+        "maccabi"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "מוחמד רינאווי",
+      "can": [
+        "second",
+        "half"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "רוני קרקבי",
+      "can": [
+        "half"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "רותם כץ",
+      "can": [
+        "half"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "אלכס אמיס",
+      "can": [
+        "half"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    },
+    {
+      "name": "בוטרוס מנסור",
+      "can": [
+        "half"
+      ],
+      "excluded": false,
+      "unavailable_dates": [],
+      "prefer_dates": [],
+      "prefer_weekdays": [],
+      "quota": {},
+      "prefer_maccabi_dates": [],
+      "prefer_maccabi_weekdays": []
+    }
+  ],
+  "weights": {
+    "pref_date": 30,
+    "pref_weekday": 15,
+    "role_pref_date": 30,
+    "role_pref_weekday": 15,
+    "quota_dev": 50,
+    "weekend_balance": 20,
+    "maccabi_balance": 15,
+    "consecutive_weekend_penalty": 120,
+    "keep_existing": 120,
+    "random_tiebreak": 2
+  },
+  "locked_assignments": []
+}
