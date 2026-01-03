@@ -1,3 +1,4 @@
+# solver.py
 import json
 import calendar
 from datetime import date
@@ -5,6 +6,7 @@ import random
 import pandas as pd
 from ortools.sat.python import cp_model
 
+# Python date.weekday(): Mon=0 ... Sun=6
 WEEKDAY = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
 
 ROLE_LABEL = {
@@ -32,12 +34,13 @@ def month_days(year, month):
     return days
 
 
-def is_half_day(weekday):
+def is_half_day(weekday: str) -> bool:
     return weekday in {"Sun", "Mon", "Tue", "Wed", "Thu"}
 
 
-def is_role_required(role, weekday, cfg):
-    rr = cfg.get("role_required", {})
+def is_role_required(role: str, weekday: str, cfg: dict) -> bool:
+    rr = cfg.get("role_required", {}) or {}
+
     if role == "half":
         mode = rr.get("half", "SUN_THU")
         if mode == "SUN_THU":
@@ -57,7 +60,7 @@ def is_role_required(role, weekday, cfg):
 
 
 def precheck_coverage(cfg):
-    year, month = cfg["year"], cfg["month"]
+    year, month = int(cfg["year"]), int(cfg["month"])
     days = month_days(year, month)
     roles = cfg.get("roles", ROLE_KEYS)
     people = [p for p in cfg.get("people", []) if not p.get("excluded", False)]
@@ -112,7 +115,7 @@ def build_summary(cfg, schedule_rows):
     pref_hits_role = {n: {r: 0 for r in roles} for n in people_by_name.keys()}
 
     for row in schedule_rows:
-        day_num = int(row["Date"].split("/")[0])
+        day_num = int(str(row["Date"]).split("/")[0])
         weekday = row["Day"]
         is_weekend = weekday in WEEKEND_DAYS
 
@@ -128,11 +131,13 @@ def build_summary(cfg, schedule_rows):
 
             p = people_by_name[assignee]
 
+            # generic prefs
             if day_num in set(p.get("prefer_dates", [])):
                 pref_hits_generic[assignee] += 1
             if weekday in set(p.get("prefer_weekdays", [])):
                 pref_hits_generic[assignee] += 1
 
+            # role prefs: prefer_first_dates / prefer_maccabi_weekdays etc.
             if day_num in set(p.get(f"prefer_{role_key}_dates", [])):
                 pref_hits_role[assignee][role_key] += 1
             if weekday in set(p.get(f"prefer_{role_key}_weekdays", [])):
@@ -153,7 +158,7 @@ def build_summary(cfg, schedule_rows):
             "Weekend Shifts": weekend_counts[person_name],
             "Max Consecutive Days": max_consec,
             "Preference Hits (Generic)": pref_hits_generic[person_name],
-            "Preference Hits (Role-Specific)": sum(pref_hits_role[person_name].values())
+            "Preference Hits (Role-Specific)": sum(pref_hits_role[person_name].values()),
         })
 
     return pd.DataFrame(summary_rows)
@@ -176,10 +181,10 @@ def _build_existing_map(existing_rows):
 
 
 def solve(cfg, time_limit_sec=20):
-    year, month = cfg["year"], cfg["month"]
-    rules = cfg.get("rules", {})
-    weights = cfg.get("weights", {})
-    locked = cfg.get("locked_assignments", [])
+    year, month = int(cfg["year"]), int(cfg["month"])
+    rules = cfg.get("rules", {}) or {}
+    weights = cfg.get("weights", {}) or {}
+    locked = cfg.get("locked_assignments", []) or []
 
     # -------------------
     # Weights (defaults)
@@ -195,10 +200,10 @@ def solve(cfg, time_limit_sec=20):
     W_MACCABI_BAL = int(weights.get("maccabi_balance", 15))
     W_CONSEC_WEEKEND = int(weights.get("consecutive_weekend_penalty", 120))
 
-    # NEW: keep existing schedule (for partial reschedule mode)
-    W_KEEP = int(weights.get("keep_existing", 120))  # strong reward to keep old assignments
+    # keep existing schedule (partial reschedule)
+    W_KEEP = int(weights.get("keep_existing", 120))
 
-    # Optional random tie-break
+    # random tie-break
     seed = int(cfg.get("random_seed", 0) or 0)
     rnd = random.Random(seed if seed != 0 else None)
     W_RANDOM = int(weights.get("random_tiebreak", 2))
@@ -209,19 +214,20 @@ def solve(cfg, time_limit_sec=20):
     res_from_date = int(res_cfg.get("from_date", 0) or 0)
     res_sick_name = (res_cfg.get("sick_name", "") or "").strip()
     res_hard_lock_non_sick_future = bool(res_cfg.get("hard_lock_non_sick_future", True))
+
     existing_rows = cfg.get("existing_schedule", []) or []
     existing_map = _build_existing_map(existing_rows) if (res_enabled and existing_rows) else {}
 
     days = month_days(year, month)
-    roles = cfg.get("roles", ROLE_KEYS)
+    roles = cfg.get("roles", ROLE_KEYS) or ROLE_KEYS
 
-    people = [p for p in cfg["people"] if not p.get("excluded", False)]
+    people = [p for p in cfg.get("people", []) if not p.get("excluded", False)]
     P = range(len(people))
     D = range(len(days))
     R = roles
 
-    name = [people[i]["name"] for i in P]
-    name_to_idx = {name[i]: i for i in P}
+    names = [people[i]["name"] for i in P]
+    name_to_idx = {names[i]: i for i in P}
 
     can = [set(people[i].get("can", [])) for i in P]
     unavail = [set(people[i].get("unavailable_dates", [])) for i in P]
@@ -240,16 +246,20 @@ def solve(cfg, time_limit_sec=20):
         role_pref_dates.append(dmap)
         role_pref_weekdays.append(wmap)
 
-    quota = [people[i].get("quota", {}) for i in P]
+    quota = [people[i].get("quota", {}) or {} for i in P]
 
     model = cp_model.CpModel()
 
+    # -------------------
     # Decision vars x[p,d,r]
+    # -------------------
     x = {}
     for p in P:
         for d in D:
             day_num, weekday = days[d]
             for r in R:
+                if not is_role_required(r, weekday, cfg):
+                    continue
                 if r == "half" and not is_half_day(weekday):
                     continue
                 if r not in can[p]:
@@ -326,10 +336,11 @@ def solve(cfg, time_limit_sec=20):
     # (D) Max consecutive working days (any role)
     max_consec = rules.get("max_consecutive_days", None)
     if max_consec is not None:
-        window = int(max_consec) + 1
+        max_consec = int(max_consec)
+        window = max_consec + 1
         for p in P:
             for start in range(len(days) - window + 1):
-                model.Add(sum(worked[(p, dd)] for dd in range(start, start + window)) <= int(max_consec))
+                model.Add(sum(worked[(p, dd)] for dd in range(start, start + window)) <= max_consec)
 
     # (E) Minimum rest days after ANY shift (hard)
     min_rest = int(rules.get("min_rest_days_any", 0) or 0)
@@ -378,6 +389,10 @@ def solve(cfg, time_limit_sec=20):
                 model.Add(v2 == 0)
 
     # (G) Partial re-schedule locks (keep existing)
+    # - Always hard-lock everything BEFORE from_date (so the past stays identical)
+    # - From from_date onward:
+    #   - if old was sick_name => don't lock
+    #   - if hard_lock_non_sick_future => lock others too
     if res_enabled and existing_map:
         for d in D:
             day_num, weekday = days[d]
@@ -386,19 +401,22 @@ def solve(cfg, time_limit_sec=20):
                 if not old_name:
                     continue
 
-                # lock everything before sick date
+                # always lock before sick date
                 if day_num < res_from_date:
                     if old_name in name_to_idx:
                         p_idx = name_to_idx[old_name]
                         v = var(p_idx, d, r)
-                        if v is not None:
+                        if v is None:
+                            model.Add(0 == 1)  # impossible to keep history => infeasible (good)
+                        else:
                             model.Add(v == 1)
+                    else:
+                        model.Add(0 == 1)
                     continue
 
-                # from sick date onward:
+                # from sick date onward
                 if day_num >= res_from_date:
                     if old_name == res_sick_name:
-                        # do not lock sick person's future shifts
                         continue
                     if res_hard_lock_non_sick_future:
                         if old_name in name_to_idx:
@@ -435,7 +453,7 @@ def solve(cfg, time_limit_sec=20):
                 if W_RANDOM > 0:
                     objective_terms.append(rnd.randint(0, W_RANDOM) * v)
 
-    # (2) Keep existing schedule (soft reward) to avoid “mess”
+    # (2) Keep existing schedule (soft reward)
     if res_enabled and existing_map:
         for d in D:
             day_num, weekday = days[d]
@@ -443,7 +461,6 @@ def solve(cfg, time_limit_sec=20):
                 old_name = existing_map.get((day_num, r))
                 if not old_name:
                     continue
-                # Don't reward keeping sick person from sick day onward
                 if day_num >= res_from_date and old_name == res_sick_name:
                     continue
                 if old_name not in name_to_idx:
@@ -468,9 +485,7 @@ def solve(cfg, time_limit_sec=20):
             model.AddAbsEquality(dev, assigned_sum - target)
             penalty_terms.append((W_QUOTA_DEV, dev))
 
-    # (4) WEEKEND fairness:
-    # A) balance total weekend work around [floor, ceil]
-    # B) penalize consecutive weekends
+    # (4) WEEKEND fairness
     weekend_day_indices = [d for d in D if days[d][1] in WEEKEND_DAYS]
     if weekend_day_indices:
         weekend_counts = []
@@ -479,7 +494,7 @@ def solve(cfg, time_limit_sec=20):
             model.Add(wsum == sum(worked[(p, d)] for d in weekend_day_indices))
             weekend_counts.append(wsum)
 
-        n_people = max(1, len(P))
+        n_people = max(1, len(list(P)))
         avg_floor = len(weekend_day_indices) // n_people
         avg_ceil = (len(weekend_day_indices) + n_people - 1) // n_people
 
@@ -493,7 +508,7 @@ def solve(cfg, time_limit_sec=20):
             penalty_terms.append((W_WEEKEND_BAL, dev_low))
             penalty_terms.append((W_WEEKEND_BAL, dev_high))
 
-        # weekend blocks (Fri+Sat)
+        # weekend blocks (Fri + Sat)
         fri_indices = [d for d in D if days[d][1] == "Fri"]
         weekend_blocks = []
         for d_fri in fri_indices:
@@ -540,7 +555,7 @@ def solve(cfg, time_limit_sec=20):
     model.Maximize(sum(objective_terms) - sum(w * dev for (w, dev) in penalty_terms))
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_sec
+    solver.parameters.max_time_in_seconds = float(time_limit_sec)
     solver.parameters.num_search_workers = 8
 
     status = solver.Solve(model)
@@ -556,7 +571,7 @@ def solve(cfg, time_limit_sec=20):
             "Day": weekday,
             ROLE_LABEL["first"]: "",
             ROLE_LABEL["second"]: "",
-            ROLE_LABEL["half"]: "" if is_half_day(weekday) else "",
+            ROLE_LABEL["half"]: "",
             ROLE_LABEL["maccabi"]: "",
         }
 
@@ -569,7 +584,7 @@ def solve(cfg, time_limit_sec=20):
             for p in P:
                 v = var(p, d, r)
                 if v is not None and solver.Value(v) == 1:
-                    row[ROLE_LABEL[r]] = name[p]
+                    row[ROLE_LABEL[r]] = names[p]
                     break
 
         out.append(row)
@@ -610,4 +625,3 @@ if __name__ == "__main__":
     else:
         print("Saved:", export_excel(rows, cfg, "output.xlsx"))
         print("Saved:", export_csv(rows, "output.csv"))
-
