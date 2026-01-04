@@ -536,9 +536,9 @@ with st.expander("⚙️ הגדרות", expanded=False):
             st.warning("לא נמצאה תבנית לחודש קודם בשם ברירת מחדל.")
 
     st.divider()
-    if st.button("💾 שמור הגדרות (input.json)", use_container_width=True, key="save_cfg_top"):
+    if st.button("💾 שמור הגדרות", use_container_width=True, key="save_cfg_top"):
         save_cfg(cfg, "input.json")
-        st.success("נשמר input.json ✅")
+        st.success("ההגדרות נשמרו ✅")
 
 # -----------------------------
 # Tabs
@@ -923,5 +923,6 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
+
 
 
