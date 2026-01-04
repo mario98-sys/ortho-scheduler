@@ -819,7 +819,7 @@ with tab_generate:
     st.divider()
 
     # ---------- SICK LEAVE ----------
-    st.subheader("עדכון לוח במקרה מחלה (מבלי לשבור את כל החודש)")
+    st.subheader("עדכון לוח במקרה מחלה")
 
     active_people = [p["name"] for p in cfg.get("people", []) if not p.get("excluded", False)]
     if not active_people:
@@ -923,3 +923,4 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
+
