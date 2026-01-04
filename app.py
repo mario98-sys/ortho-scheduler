@@ -2,6 +2,7 @@
 import os
 import json
 import copy
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 
@@ -79,6 +80,73 @@ DEFAULT_CFG = {
 
 TEMPLATES_DIR = "templates"
 
+# -----------------------------
+# Persistent Storage (Auto-save schedules)
+# -----------------------------
+DATA_DIR = "data"
+SCHEDULES_DIR = os.path.join(DATA_DIR, "schedules")
+
+
+def ensure_storage_dirs():
+    os.makedirs(SCHEDULES_DIR, exist_ok=True)
+
+
+def schedule_key(cfg: dict) -> str:
+    y = int(cfg.get("year"))
+    m = int(cfg.get("month"))
+    return f"{y}_{m:02d}"
+
+
+def make_schedule_snapshot(cfg: dict, rows: list, label: str = "") -> dict:
+    return {
+        "meta": {
+            "app": "ortho-scheduler",
+            "version": "1.0",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "label": label or f"Schedule {schedule_key(cfg)}",
+        },
+        "cfg": cfg,
+        "rows": rows,
+    }
+
+
+def versioned_snapshot_path(cfg: dict) -> str:
+    """
+    Versioning: every save creates a new file.
+    Example: schedule_2026_03__20260104_102530.json
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join(SCHEDULES_DIR, f"schedule_{schedule_key(cfg)}__{ts}.json")
+
+
+def save_snapshot_to_disk(cfg: dict, rows: list, label: str = "") -> str:
+    ensure_storage_dirs()
+    path = versioned_snapshot_path(cfg)
+    snap = make_schedule_snapshot(cfg, rows, label=label)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(snap, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def load_snapshot_from_disk(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def list_saved_schedules(all_months=True, cfg=None):
+    """
+    Returns list of file paths sorted newest-first.
+    If all_months=False and cfg provided -> filter by current month prefix.
+    """
+    ensure_storage_dirs()
+    files = sorted([f for f in os.listdir(SCHEDULES_DIR) if f.endswith(".json")], reverse=True)
+
+    if not all_months and cfg is not None:
+        prefix = f"schedule_{schedule_key(cfg)}__"
+        files = [f for f in files if f.startswith(prefix)]
+
+    return [os.path.join(SCHEDULES_DIR, f) for f in files]
+
 
 # -----------------------------
 # Utilities
@@ -130,7 +198,7 @@ def month_last_day(year, month):
 
 def reset_person_inputs(cfg):
     """
-    Resets ONLY per-person fields (as requested):
+    Resets ONLY per-person fields:
     - Availability (unavailable_dates)
     - Generic preferences (prefer_dates, prefer_weekdays)
     - Maccabi preferences (prefer_maccabi_dates, prefer_maccabi_weekdays)
@@ -344,9 +412,7 @@ def apply_sick_leave_to_cfg(cfg, sick_name: str, from_date: int):
 # -----------------------------
 st.set_page_config(page_title="שיבוץ מתמחים אורטופדיה", layout="wide")
 
-# RTL + MOBILE FIX:
-# - Hide Streamlit sidebar entirely on mobile to prevent “ghost sidebar” layout bugs
-# - Make buttons full width on mobile
+# RTL + MOBILE FIX
 st.markdown(
     """
     <style>
@@ -355,10 +421,8 @@ st.markdown(
       h1, h2, h3, h4, h5, h6, p, div, span, label { text-align: right; }
       .stDataFrame { direction: rtl; }
 
-      /* Optional: slightly tighter desktop spacing */
       .block-container { padding-top: 1.2rem; }
 
-      /* MOBILE: hide sidebar completely so it can’t mess layout when “closed” */
       @media (max-width: 768px) {
         section[data-testid="stSidebar"] { display: none !important; }
         div[data-testid="collapsedControl"] { display: none !important; }
@@ -394,6 +458,7 @@ if "diff_df" not in st.session_state:
     st.session_state.diff_df = None
 
 ensure_templates_dir()
+ensure_storage_dirs()
 
 st.title("שיבוץ מתמחים באורטופדיה")
 
@@ -405,7 +470,6 @@ cfg.setdefault("people", [])
 
 # -----------------------------
 # Settings (mobile-friendly)
-# (We DO NOT use st.sidebar anymore)
 # -----------------------------
 with st.expander("⚙️ הגדרות", expanded=False):
     cY, cM = st.columns(2)
@@ -440,6 +504,8 @@ with st.expander("⚙️ הגדרות", expanded=False):
                     cfg_loaded = json.load(f)
                 cfg = cfg_loaded
                 st.success("נטענה תבנית ✅")
+                save_cfg(cfg, "input.json")
+                st.rerun()
     with c2:
         tpl_name = st.text_input("שם לשמירה", value=f"schedule_{cfg['year']}_{cfg['month']:02d}", key="tpl_save_name")
         if st.button("שמור תבנית", use_container_width=True, key="tpl_save_btn"):
@@ -464,6 +530,8 @@ with st.expander("⚙️ הגדרות", expanded=False):
             base["month"] = m
             cfg = base
             st.success("שוכפל חודש קודם ✅")
+            save_cfg(cfg, "input.json")
+            st.rerun()
         else:
             st.warning("לא נמצאה תבנית לחודש קודם בשם ברירת מחדל.")
 
@@ -500,7 +568,6 @@ with tab_people:
     for i, p in enumerate(cfg["people"]):
         title = f"{i + 1}. {p.get('name', '(ללא שם)')}"
         with st.expander(title, expanded=False):
-            # Mobile friendly: stack into rows (avoid tight 3-column on phone)
             p["name"] = st.text_input("שם", value=p.get("name", ""), key=f"name_{i}")
             cA, cB = st.columns(2)
             with cA:
@@ -555,7 +622,6 @@ with tab_people:
             st.markdown("#### יעדים (Quota) — לא חובה")
             q = p.get("quota", {})
 
-            # Mobile friendly: 2 columns instead of 4
             q1, q2 = st.columns(2)
             with q1:
                 q_first = st.text_input("תורן ראשון", value=str(q.get("first", "")), key=f"qf_{i}")
@@ -654,8 +720,67 @@ with tab_locks:
 # Generate tab
 # -----------------------------
 with tab_generate:
-    st.subheader("יצירת לוח ותוצאות")
+    st.subheader("יצירה, טעינה ותוצאות")
 
+    # ---------- LOAD SAVED SCHEDULE ----------
+    st.subheader("📂 טעינת לוח שנשמר במערכת")
+
+    saved_all = list_saved_schedules(all_months=True)
+    saved_month = list_saved_schedules(all_months=False, cfg=cfg)
+
+    if not saved_all:
+        st.info("אין לוחות שמורים עדיין. צור/י לוח פעם אחת והוא יישמר אוטומטית.")
+    else:
+        # Default: prefer latest of current month, otherwise latest overall
+        candidates = saved_month if saved_month else saved_all
+        default_path = candidates[0]  # newest-first
+        chosen = st.selectbox(
+            "בחר/י לוח טעינה (חדש למעלה)",
+            candidates,
+            index=0,
+            format_func=lambda p: os.path.basename(p),
+            key="saved_schedule_select"
+        )
+
+        cL1, cL2 = st.columns(2)
+        with cL1:
+            if st.button("טען לוח", use_container_width=True, key="load_saved_btn"):
+                try:
+                    snap = load_snapshot_from_disk(chosen)
+                    cfg_loaded = snap.get("cfg", {})
+                    rows_loaded = snap.get("rows", [])
+
+                    if not isinstance(cfg_loaded, dict) or not isinstance(rows_loaded, list):
+                        raise ValueError("Snapshot format invalid")
+
+                    # load exact cfg used
+                    cfg = cfg_loaded
+                    save_cfg(cfg, "input.json")  # so People/Locks tabs reflect it
+
+                    st.session_state.last_rows = rows_loaded
+                    st.session_state.generated = True
+
+                    schedule_he, summary_he, excel_bytes, csv_bytes = export_hebrew_files(
+                        rows_loaded, cfg, excel_path="output.xlsx", csv_path="output.csv"
+                    )
+                    st.session_state.excel_bytes = excel_bytes
+                    st.session_state.csv_bytes = csv_bytes
+                    st.session_state.schedule_he = schedule_he
+                    st.session_state.summary_he = summary_he
+                    st.session_state.diff_df = None
+
+                    st.success("הלוח נטען ✅ אפשר עכשיו לבצע עדכון מחלה / להוריד קבצים")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"שגיאה בטעינת לוח: {e}")
+
+        with cL2:
+            if st.button("רענן רשימה", use_container_width=True, key="refresh_saved_list"):
+                st.rerun()
+
+    st.divider()
+
+    # ---------- COVERAGE PRECHECK ----------
     holes = precheck_coverage(cfg)
     if holes:
         st.warning("יש חורים בכיסוי (יגרום ל-INFEASIBLE):")
@@ -665,7 +790,7 @@ with tab_generate:
             st.write(f"... ועוד {len(holes) - 30} חורים")
         st.stop()
 
-    # Generate normal schedule
+    # ---------- GENERATE NORMAL ----------
     if st.button("⚙️ צור/י לוח עבודה", use_container_width=True, key="gen_normal"):
         save_cfg(cfg, "input.json")
 
@@ -677,6 +802,7 @@ with tab_generate:
             schedule_he, summary_he, excel_bytes, csv_bytes = export_hebrew_files(
                 rows, cfg, excel_path="output.xlsx", csv_path="output.csv"
             )
+
             st.session_state.generated = True
             st.session_state.last_rows = rows
             st.session_state.excel_bytes = excel_bytes
@@ -684,11 +810,15 @@ with tab_generate:
             st.session_state.schedule_he = schedule_he
             st.session_state.summary_he = summary_he
             st.session_state.diff_df = None
+
+            # AUTO-SAVE (versioned)
+            saved_path = save_snapshot_to_disk(cfg, rows, label="Generated schedule")
             st.success("הלוח נוצר בהצלחה ✅ (הקבצים זמינים להורדה)")
+            st.info(f"נשמר אוטומטית ✅ {os.path.basename(saved_path)}")
 
     st.divider()
 
-    # Sick leave section (UI only; solver.py must support it)
+    # ---------- SICK LEAVE ----------
     st.subheader("עדכון לוח במקרה מחלה (מבלי לשבור את כל החודש)")
 
     active_people = [p["name"] for p in cfg.get("people", []) if not p.get("excluded", False)]
@@ -704,7 +834,7 @@ with tab_generate:
 
         if st.button("🔁 צור/י שיבוץ מעודכן (מחלה)", use_container_width=True, key="gen_sick"):
             if not st.session_state.last_rows:
-                st.error("אין לוח קודם. קודם צור/י לוח עבודה רגיל.")
+                st.error("אין לוח קודם. טען/י לוח שמור או צור/י לוח עבודה רגיל.")
             else:
                 prev_rows = st.session_state.last_rows
 
@@ -742,11 +872,19 @@ with tab_generate:
                     st.session_state.csv_bytes = csv_bytes
                     st.session_state.schedule_he = schedule_he
                     st.session_state.summary_he = summary_he
-                    st.success("נוצר שיבוץ מעודכן למחלה ✅ (הקבצים עודכנו להורדה)")
 
-    # Outputs
+                    # AUTO-SAVE (versioned)
+                    saved_path = save_snapshot_to_disk(
+                        cfg_try, rows_new, label=f"Sick update: {sick_name} from day {int(from_date)}"
+                    )
+
+                    st.success("נוצר שיבוץ מעודכן למחלה ✅ (הקבצים עודכנו להורדה)")
+                    st.info(f"נשמר אוטומטית ✅ {os.path.basename(saved_path)}")
+
+    # ---------- OUTPUTS ----------
     if st.session_state.generated:
         st.subheader("הורדת קבצים")
+
         st.download_button(
             "⬇️ הורד Excel",
             data=st.session_state.excel_bytes,
@@ -785,9 +923,3 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
-
-# Persist any changes in-memory (optional)
-# NOTE: We intentionally do NOT auto-save to input.json to avoid overwriting by mistake.
-
-
-
