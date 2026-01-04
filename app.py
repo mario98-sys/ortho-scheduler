@@ -580,7 +580,7 @@ with tab_people:
                 "עמדות",
                 ROLE_KEYS,
                 default=p.get("can", []),
-                format_func=lambda r0: f"{ROLE_NAMES_HE[r0]} ({r0})",
+                format_func=lambda r0: ROLE_NAMES_HE.get(r0, r0),
                 key=f"can_{i}"
             )
 
@@ -923,4 +923,5 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
+
 
