@@ -620,13 +620,13 @@ with tab_people:
     c_save, c_reset = st.columns([1, 1])
 
     with c_save:
-        if st.button("💾 שמור הגדרות (input.json)"):
+        if st.button("שמור הגדרות (input.json)"):
             save_cfg(st.session_state.cfg, "input.json")
             st.success("נשמר input.json ✅")
 
     with c_reset:
         if not st.session_state.reset_pending:
-            if st.button("♻️ איפוס (זמינות + יעדים + העדפות)"):
+            if st.button("איפוס (זמינות + יעדים + העדפות)"):
                 st.session_state.reset_pending = True
                 st.warning(
                     "אזהרה: פעולה זו תאפס עבור כל המתמחים:\n"
@@ -865,4 +865,5 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
+
 
