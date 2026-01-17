@@ -718,7 +718,7 @@ with tab_locks:
                 save_cfg(cfg, "input.json")
                 st.success("נעילות נשמרו ב-input.json ✅")
         with cL2:
-            if st.button("🧹 נקה את כל הנעילות"):
+            if st.button("נקה את כל הנעילות"):
                 cfg["locked_assignments"] = []
                 st.session_state.cfg = cfg
                 save_cfg(cfg, "input.json")
@@ -865,3 +865,4 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
+
