@@ -620,9 +620,9 @@ with tab_people:
     c_save, c_reset = st.columns([1, 1])
 
     with c_save:
-        if st.button("שמור הגדרות (input.json)"):
+        if st.button("שמור הגדרות"):
             save_cfg(st.session_state.cfg, "input.json")
-            st.success("נשמר input.json ✅")
+            st.success("נשמר ✅")
 
     with c_reset:
         if not st.session_state.reset_pending:
@@ -716,7 +716,7 @@ with tab_locks:
             if st.button("💾 שמור נעילות"):
                 st.session_state.cfg = cfg
                 save_cfg(cfg, "input.json")
-                st.success("נעילות נשמרו ב-input.json ✅")
+                st.success("נעילות נשמרו ✅")
         with cL2:
             if st.button("נקה את כל הנעילות"):
                 cfg["locked_assignments"] = []
@@ -865,5 +865,6 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
+
 
 
