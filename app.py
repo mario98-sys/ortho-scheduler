@@ -2,10 +2,16 @@
 import os
 import json
 import copy
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 from solver import solve, build_summary, precheck_coverage
+
 
 # -----------------------------
 # Constants / Labels
@@ -60,6 +66,7 @@ DEFAULT_CFG = {
         "min_rest_days_any": 0,
     },
     "weights": {
+        # existing
         "pref_date": 30,
         "pref_weekday": 15,
         "role_pref_date": 30,
@@ -69,20 +76,33 @@ DEFAULT_CFG = {
         "maccabi_balance": 15,
         "consecutive_weekend_penalty": 120,
         "keep_existing": 120,
-        "random_tiebreak": 2,
+
+        # NEW: human-friendly style weights
+        "adjacent_any_work_penalty": 80,        # discourage any back-to-back work
+        "adjacent_same_role_penalty": 140,      # discourage same role back-to-back
+        "repeat_first_within3_penalty": 90,      # same person as FIRST within 3 days
+        "repeat_second_within3_penalty": 70,     # same person as SECOND within 3 days
+        "repeat_maccabi_within2_penalty": 40,    # same person maccabi within 2 days (milder)
+        "maccabi_fri_sat_same_bonus": 120,       # encourage same maccabi Fri+Sat
+        "avoid_first_second_swap_penalty": 60,   # discourage FIRST today -> SECOND tomorrow or vice versa
+
+        # make randomness very small by default
+        "random_tiebreak": 1,
     },
     "locked_assignments": [],
     "people": [],
 }
 
 TEMPLATES_DIR = "templates"
+OUTPUTS_DIR = "outputs"   # where schedules are saved for later loading
 
 
 # -----------------------------
 # Utilities
 # -----------------------------
-def ensure_templates_dir():
+def ensure_dirs():
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
+    os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 
 def load_cfg(path="input.json"):
@@ -122,7 +142,6 @@ def int_list_to_text(lst):
 
 def month_last_day(year, month):
     import calendar
-
     _, last = calendar.monthrange(year, month)
     return last
 
@@ -206,6 +225,59 @@ def summary_to_hebrew_df(summary_df: pd.DataFrame):
     return out[cols]
 
 
+def _style_excel_hebrew(path: str):
+    """Make the Excel output more readable and doctor-friendly."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path)
+
+    header_font = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    weekend_fill = PatternFill("solid", fgColor="FFF2F2")  # light red/pink
+    header_fill = PatternFill("solid", fgColor="F2F2F2")
+
+    for wsname in wb.sheetnames:
+        ws = wb[wsname]
+        ws.sheet_view.rightToLeft = True
+        ws.freeze_panes = "A2"
+
+        # Header styling
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center
+
+        # Auto width
+        for col in range(1, ws.max_column + 1):
+            col_letter = get_column_letter(col)
+            max_len = 0
+            for row in range(1, ws.max_row + 1):
+                val = ws.cell(row=row, column=col).value
+                if val is None:
+                    continue
+                max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 40)
+
+        # Weekend shading (only on "לוח עבודה" if column "יום" exists)
+        if wsname == "לוח עבודה":
+            # find "יום" column
+            day_col = None
+            for col in range(1, ws.max_column + 1):
+                if str(ws.cell(row=1, column=col).value).strip() == "יום":
+                    day_col = col
+                    break
+            if day_col:
+                for row in range(2, ws.max_row + 1):
+                    day_val = str(ws.cell(row=row, column=day_col).value).strip()
+                    if day_val in ("שישי", "שבת"):
+                        for col in range(1, ws.max_column + 1):
+                            ws.cell(row=row, column=col).fill = weekend_fill
+                    for col in range(1, ws.max_column + 1):
+                        ws.cell(row=row, column=col).alignment = center
+
+    wb.save(path)
+
+
 def export_hebrew_files(rows, cfg, excel_path="output.xlsx", csv_path="output.csv"):
     schedule_he = schedule_rows_to_hebrew_df(rows)
     summary_he = summary_to_hebrew_df(build_summary(cfg, rows))
@@ -213,6 +285,8 @@ def export_hebrew_files(rows, cfg, excel_path="output.xlsx", csv_path="output.cs
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         schedule_he.to_excel(writer, index=False, sheet_name="לוח עבודה")
         summary_he.to_excel(writer, index=False, sheet_name="סיכום")
+
+    _style_excel_hebrew(excel_path)
 
     schedule_he.to_csv(csv_path, index=False, encoding="utf-8-sig")
 
@@ -374,6 +448,57 @@ def apply_sick_leave_to_cfg(cfg, sick_name: str, from_date: int):
             break
 
 
+def _save_schedule_bundle(cfg: dict, rows: list, excel_path: str, csv_path: str) -> dict:
+    """
+    Save a bundle in outputs/ so we can reload later:
+      - rows + cfg snapshot in a JSON
+      - the excel/csv files
+    Returns metadata.
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = f"schedule_{cfg['year']}_{cfg['month']:02d}_{ts}"
+
+    out_dir = Path(OUTPUTS_DIR)
+    bundle_json = out_dir / f"{base}.json"
+    bundle_xlsx = out_dir / f"{base}.xlsx"
+    bundle_csv = out_dir / f"{base}.csv"
+
+    # copy/export files into outputs/
+    Path(excel_path).replace(bundle_xlsx)
+    Path(csv_path).replace(bundle_csv)
+
+    payload = {
+        "meta": {
+            "created_at": ts,
+            "year": cfg["year"],
+            "month": cfg["month"],
+            "base": base,
+        },
+        "cfg": cfg,
+        "rows": rows,
+        "files": {
+            "xlsx": str(bundle_xlsx),
+            "csv": str(bundle_csv),
+        },
+    }
+
+    with open(bundle_json, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    return payload["meta"]
+
+
+def _list_saved_bundles():
+    out_dir = Path(OUTPUTS_DIR)
+    files = sorted(out_dir.glob("schedule_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files
+
+
+def _load_bundle(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 # -----------------------------
 # Streamlit setup
 # -----------------------------
@@ -408,11 +533,11 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
-ensure_templates_dir()
+ensure_dirs()
 
 st.title("שיבוץ מתמחים באורטופדיה")
 
-# ---- IMPORTANT FIX: keep cfg in session_state (pins won't disappear) ----
+# ---- keep cfg in session_state ----
 if "cfg" not in st.session_state:
     st.session_state.cfg = load_cfg("input.json")
 
@@ -449,10 +574,20 @@ r["first_second_blocks_next_day_maccabi"] = st.sidebar.checkbox(
     "תורן 1/2 חוסם מכבי למחרת", value=bool(r.get("first_second_blocks_next_day_maccabi", True))
 )
 r["max_consecutive_days"] = int(
-    st.sidebar.number_input("מקסימום ימים רצופים", min_value=1, max_value=10, value=int(r.get("max_consecutive_days", 2)))
+    st.sidebar.number_input(
+        "מקסימום ימים רצופים",
+        min_value=1,
+        max_value=10,
+        value=int(r.get("max_consecutive_days", 2)),
+    )
 )
 r["min_rest_days_any"] = int(
-    st.sidebar.number_input("מינימום ימי מנוחה בין משמרות (0=אין)", min_value=0, max_value=7, value=int(r.get("min_rest_days_any", 0)))
+    st.sidebar.number_input(
+        "מינימום ימי מנוחה בין משמרות (0=אין)",
+        min_value=0,
+        max_value=7,
+        value=int(r.get("min_rest_days_any", 0)),
+    )
 )
 cfg["rules"] = r
 
@@ -497,7 +632,6 @@ if st.sidebar.button("שכפל חודש קודם"):
     else:
         st.sidebar.warning("לא נמצאה תבנית לחודש קודם בשם ברירת מחדל.")
 
-# refresh local cfg reference after sidebar operations
 cfg = st.session_state.cfg
 
 # -----------------------------
@@ -651,7 +785,7 @@ with tab_people:
                     st.info("האיפוס בוטל.")
 
 # -----------------------------
-# Locks tab (FIXED: won't disappear)
+# Locks tab
 # -----------------------------
 with tab_locks:
     st.subheader("נעילות (Pin) — לקבוע מראש מי עושה מה ומתי")
@@ -731,6 +865,46 @@ with tab_locks:
 with tab_generate:
     st.subheader("יצירת לוח ותוצאות")
 
+    # --------- LOAD PREVIOUS SCHEDULE (RESTORED) ---------
+    st.markdown("### טעינת לוח קודם (Load previous schedule)")
+    saved = _list_saved_bundles()
+    if not saved:
+        st.info("אין עדיין לוחות שמורים בתיקיית outputs/. צור לוח ראשון ואז תוכל לטעון אותו כאן.")
+    else:
+        chosen = st.selectbox(
+            "בחר לוח שמור",
+            options=saved,
+            format_func=lambda p: p.name,
+            key="load_bundle_select",
+        )
+        cL1, cL2 = st.columns([1, 3])
+        with cL1:
+            if st.button("📂 טען לוח", key="btn_load_bundle"):
+                bundle = _load_bundle(str(chosen))
+                cfg_loaded = bundle.get("cfg", {})
+                rows_loaded = bundle.get("rows", [])
+
+                # load into session
+                st.session_state.cfg = cfg_loaded
+                st.session_state.last_rows = rows_loaded
+
+                schedule_he, summary_he, excel_bytes, csv_bytes = export_hebrew_files(
+                    rows_loaded, cfg_loaded, excel_path="output.xlsx", csv_path="output.csv"
+                )
+                st.session_state.generated = True
+                st.session_state.excel_bytes = excel_bytes
+                st.session_state.csv_bytes = csv_bytes
+                st.session_state.schedule_he = schedule_he
+                st.session_state.summary_he = summary_he
+                st.session_state.diff_df = None
+
+                st.success(f"נטען בהצלחה ✅ {chosen.name}")
+                st.rerun()
+        with cL2:
+            st.caption("הטעינה מחזירה גם את ההגדרות (cfg) שהיו בעת יצירת הלוח.")
+
+    st.divider()
+
     holes = precheck_coverage(cfg)
     if holes:
         st.warning("יש חורים בכיסוי (יגרום ל-INFEASIBLE):")
@@ -751,9 +925,14 @@ with tab_generate:
             st.session_state.generated = False
             st.error("לא נמצא שיבוץ חוקי (INFEASIBLE). נסה/י להקל חוקים / לעדכן זמינות / להסיר נעילות בעייתיות.")
         else:
+            # create temp outputs then bundle-save
             schedule_he, summary_he, excel_bytes, csv_bytes = export_hebrew_files(
                 rows, cfg, excel_path="output.xlsx", csv_path="output.csv"
             )
+
+            # save bundle (moves output.xlsx/output.csv into outputs/)
+            meta = _save_schedule_bundle(cfg, rows, "output.xlsx", "output.csv")
+
             st.session_state.generated = True
             st.session_state.last_rows = rows
             st.session_state.excel_bytes = excel_bytes
@@ -761,7 +940,7 @@ with tab_generate:
             st.session_state.schedule_he = schedule_he
             st.session_state.summary_he = summary_he
             st.session_state.diff_df = None
-            st.success("הלוח נוצר בהצלחה ✅ (הקבצים נשמרו + זמינים להורדה כאן)")
+            st.success(f"הלוח נוצר בהצלחה ✅ ונשמר ב- outputs/ ({meta['base']})")
 
     st.divider()
 
@@ -782,7 +961,7 @@ with tab_generate:
 
         if st.button("🔁 צור/י שיבוץ מעודכן (מחלה)"):
             if not st.session_state.last_rows:
-                st.error("אין לוח קודם. קודם צור/י לוח עבודה רגיל.")
+                st.error("אין לוח קודם. קודם צור/י לוח עבודה רגיל או טען לוח קודם.")
             else:
                 prev_rows = st.session_state.last_rows
 
@@ -814,6 +993,8 @@ with tab_generate:
                         rows_new, cfg_try, excel_path="output.xlsx", csv_path="output.csv"
                     )
 
+                    meta = _save_schedule_bundle(cfg_try, rows_new, "output.xlsx", "output.csv")
+
                     st.session_state.generated = True
                     st.session_state.last_rows = rows_new
                     st.session_state.excel_bytes = excel_bytes
@@ -821,7 +1002,7 @@ with tab_generate:
                     st.session_state.schedule_he = schedule_he
                     st.session_state.summary_he = summary_he
 
-                    st.success("נוצר שיבוץ מעודכן למחלה ✅ (הקבצים עודכנו להורדה)")
+                    st.success(f"נוצר שיבוץ מעודכן למחלה ✅ ונשמר ב- outputs/ ({meta['base']})")
 
     # Show outputs if generated
     if st.session_state.generated:
@@ -865,6 +1046,3 @@ with tab_generate:
             else:
                 st.success(f"נמצאו {len(df)} שינויים:")
                 st.dataframe(df, use_container_width=True)
-
-
-
