@@ -131,13 +131,11 @@ def build_summary(cfg, schedule_rows):
 
             p = people_by_name[assignee]
 
-            # generic prefs
             if day_num in set(p.get("prefer_dates", [])):
                 pref_hits_generic[assignee] += 1
             if weekday in set(p.get("prefer_weekdays", [])):
                 pref_hits_generic[assignee] += 1
 
-            # role prefs: prefer_first_dates / prefer_maccabi_weekdays etc.
             if day_num in set(p.get(f"prefer_{role_key}_dates", [])):
                 pref_hits_role[assignee][role_key] += 1
             if weekday in set(p.get(f"prefer_{role_key}_weekdays", [])):
@@ -195,18 +193,24 @@ def solve(cfg, time_limit_sec=20):
     W_ROLE_PREF_WD = int(weights.get("role_pref_weekday", 15))
     W_QUOTA_DEV = int(weights.get("quota_dev", 50))
 
-    # Fairness
-    W_WEEKEND_BAL = int(weights.get("weekend_balance", 40))
+    W_WEEKEND_BAL = int(weights.get("weekend_balance", 20))
     W_MACCABI_BAL = int(weights.get("maccabi_balance", 15))
     W_CONSEC_WEEKEND = int(weights.get("consecutive_weekend_penalty", 120))
-
-    # keep existing schedule (partial reschedule)
     W_KEEP = int(weights.get("keep_existing", 120))
 
-    # random tie-break
+    # NEW: human-friendliness weights
+    W_ADJ_ANY = int(weights.get("adjacent_any_work_penalty", 80))
+    W_ADJ_SAME_ROLE = int(weights.get("adjacent_same_role_penalty", 140))
+    W_REPEAT_FIRST_3 = int(weights.get("repeat_first_within3_penalty", 90))
+    W_REPEAT_SECOND_3 = int(weights.get("repeat_second_within3_penalty", 70))
+    W_REPEAT_MACCABI_2 = int(weights.get("repeat_maccabi_within2_penalty", 40))
+    W_MAC_FRI_SAT_BONUS = int(weights.get("maccabi_fri_sat_same_bonus", 120))
+    W_AVOID_SWAP = int(weights.get("avoid_first_second_swap_penalty", 60))
+
+    # random tie-break (keep tiny)
     seed = int(cfg.get("random_seed", 0) or 0)
     rnd = random.Random(seed if seed != 0 else None)
-    W_RANDOM = int(weights.get("random_tiebreak", 2))
+    W_RANDOM = int(weights.get("random_tiebreak", 1))
 
     # Reschedule fields
     res_cfg = cfg.get("reschedule", {}) or {}
@@ -389,10 +393,6 @@ def solve(cfg, time_limit_sec=20):
                 model.Add(v2 == 0)
 
     # (G) Partial re-schedule locks (keep existing)
-    # - Always hard-lock everything BEFORE from_date (so the past stays identical)
-    # - From from_date onward:
-    #   - if old was sick_name => don't lock
-    #   - if hard_lock_non_sick_future => lock others too
     if res_enabled and existing_map:
         for d in D:
             day_num, weekday = days[d]
@@ -407,7 +407,7 @@ def solve(cfg, time_limit_sec=20):
                         p_idx = name_to_idx[old_name]
                         v = var(p_idx, d, r)
                         if v is None:
-                            model.Add(0 == 1)  # impossible to keep history => infeasible (good)
+                            model.Add(0 == 1)
                         else:
                             model.Add(v == 1)
                     else:
@@ -430,6 +430,13 @@ def solve(cfg, time_limit_sec=20):
     # -------------------
     objective_terms = []
     penalty_terms = []
+
+    def add_and_bool(a, b, name):
+        """creates z = a AND b"""
+        z = model.NewBoolVar(name)
+        model.AddBoolAnd([a, b]).OnlyEnforceIf(z)
+        model.AddBoolOr([a.Not(), b.Not()]).OnlyEnforceIf(z.Not())
+        return z
 
     # (1) Preferences + tiny random tie-break
     for p in P:
@@ -508,7 +515,7 @@ def solve(cfg, time_limit_sec=20):
             penalty_terms.append((W_WEEKEND_BAL, dev_low))
             penalty_terms.append((W_WEEKEND_BAL, dev_high))
 
-        # weekend blocks (Fri + Sat)
+        # consecutive weekend blocks penalty
         fri_indices = [d for d in D if days[d][1] == "Fri"]
         weekend_blocks = []
         for d_fri in fri_indices:
@@ -531,9 +538,7 @@ def solve(cfg, time_limit_sec=20):
 
         for p in P:
             for w in range(len(weekend_blocks) - 1):
-                both = model.NewBoolVar(f"consec_weekends_p{p}_w{w}")
-                model.AddBoolAnd([works_weekend[(p, w)], works_weekend[(p, w + 1)]]).OnlyEnforceIf(both)
-                model.AddBoolOr([works_weekend[(p, w)].Not(), works_weekend[(p, w + 1)].Not()]).OnlyEnforceIf(both.Not())
+                both = add_and_bool(works_weekend[(p, w)], works_weekend[(p, w + 1)], f"consec_weekends_p{p}_w{w}")
                 penalty_terms.append((W_CONSEC_WEEKEND, both))
 
     # (5) Maccabi balancing
@@ -552,6 +557,110 @@ def solve(cfg, time_limit_sec=20):
             model.AddAbsEquality(dev, c - avg_m)
             penalty_terms.append((W_MACCABI_BAL, dev))
 
+    # -------------------------
+    # NEW: "doctor-style" soft constraints
+    # -------------------------
+
+    # A) discourage any adjacent-day work for same person (unless forced)
+    if W_ADJ_ANY > 0:
+        for p in P:
+            for d in range(1, len(days)):
+                both = add_and_bool(worked[(p, d - 1)], worked[(p, d)], f"adj_any_p{p}_d{d}")
+                penalty_terms.append((W_ADJ_ANY, both))
+
+    # B) discourage same role on adjacent days (stronger)
+    if W_ADJ_SAME_ROLE > 0:
+        for p in P:
+            for d in range(1, len(days)):
+                for rr in ["first", "second", "maccabi", "half"]:
+                    v1 = var(p, d - 1, rr)
+                    v2 = var(p, d, rr)
+                    if v1 is None or v2 is None:
+                        continue
+                    both = add_and_bool(v1, v2, f"adj_same_role_{rr}_p{p}_d{d}")
+                    penalty_terms.append((W_ADJ_SAME_ROLE, both))
+
+    # C) discourage repeating FIRST within 3 days (human rotation)
+    if W_REPEAT_FIRST_3 > 0:
+        for p in P:
+            for d in range(len(days)):
+                v_today = var(p, d, "first")
+                if v_today is None:
+                    continue
+                for k in (1, 2, 3):
+                    if d + k >= len(days):
+                        continue
+                    v_next = var(p, d + k, "first")
+                    if v_next is None:
+                        continue
+                    both = add_and_bool(v_today, v_next, f"repeat_first3_p{p}_d{d}_k{k}")
+                    penalty_terms.append((W_REPEAT_FIRST_3, both))
+
+    # D) discourage repeating SECOND within 3 days
+    if W_REPEAT_SECOND_3 > 0:
+        for p in P:
+            for d in range(len(days)):
+                v_today = var(p, d, "second")
+                if v_today is None:
+                    continue
+                for k in (1, 2, 3):
+                    if d + k >= len(days):
+                        continue
+                    v_next = var(p, d + k, "second")
+                    if v_next is None:
+                        continue
+                    both = add_and_bool(v_today, v_next, f"repeat_second3_p{p}_d{d}_k{k}")
+                    penalty_terms.append((W_REPEAT_SECOND_3, both))
+
+    # E) discourage repeating MACCABI within 2 days (milder, but helps)
+    if W_REPEAT_MACCABI_2 > 0:
+        for p in P:
+            for d in range(len(days)):
+                v_today = var(p, d, "maccabi")
+                if v_today is None:
+                    continue
+                for k in (1, 2):
+                    if d + k >= len(days):
+                        continue
+                    v_next = var(p, d + k, "maccabi")
+                    if v_next is None:
+                        continue
+                    both = add_and_bool(v_today, v_next, f"repeat_maccabi2_p{p}_d{d}_k{k}")
+                    penalty_terms.append((W_REPEAT_MACCABI_2, both))
+
+    # F) encourage same MACCABI across Fri+Sat (doctor-style weekend block)
+    if W_MAC_FRI_SAT_BONUS > 0:
+        for d in range(len(days) - 1):
+            if days[d][1] == "Fri" and days[d + 1][1] == "Sat":
+                for p in P:
+                    v_fri = var(p, d, "maccabi")
+                    v_sat = var(p, d + 1, "maccabi")
+                    if v_fri is None or v_sat is None:
+                        continue
+                    both = add_and_bool(v_fri, v_sat, f"maccabi_frisat_same_p{p}_d{d}")
+                    objective_terms.append(W_MAC_FRI_SAT_BONUS * both)
+
+    # G) discourage swapping FIRST<->SECOND across adjacent days (less “random looking”)
+    if W_AVOID_SWAP > 0:
+        for p in P:
+            for d in range(1, len(days)):
+                v_prev_first = var(p, d - 1, "first")
+                v_prev_second = var(p, d - 1, "second")
+                v_now_first = var(p, d, "first")
+                v_now_second = var(p, d, "second")
+
+                # prev first -> now second
+                if v_prev_first is not None and v_now_second is not None:
+                    both = add_and_bool(v_prev_first, v_now_second, f"swap_f_s_p{p}_d{d}")
+                    penalty_terms.append((W_AVOID_SWAP, both))
+                # prev second -> now first
+                if v_prev_second is not None and v_now_first is not None:
+                    both = add_and_bool(v_prev_second, v_now_first, f"swap_s_f_p{p}_d{d}")
+                    penalty_terms.append((W_AVOID_SWAP, both))
+
+    # -------------------
+    # Final objective
+    # -------------------
     model.Maximize(sum(objective_terms) - sum(w * dev for (w, dev) in penalty_terms))
 
     solver = cp_model.CpSolver()
